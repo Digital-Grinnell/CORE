@@ -16,7 +16,7 @@ Companion file in this repo: `HUMANS.md` is the human-facing guide for working w
 Always make the smallest change at the highest appropriate layer before editing lower-level runtime code:
 
 1. `FUNCTION_*.md`, `README.md`, `QUICKSTART.md`, and related docs for behavior clarification
-2. Targeted launch/packaging scripts (`run.sh`, `run.bat`, `build_dmg.sh`, `build_windows_zip.sh`)
+2. Targeted launch/packaging scripts (`run.sh`, `scripts/run.sh`, `scripts/run.bat`, `scripts/build_dmg.sh`, `scripts/build_windows_zip.sh`)
 3. `python_requirements.txt` for dependency changes
 4. `app.py` for core application logic and UI behavior
 5. Backup or generated artifacts only when explicitly requested
@@ -49,8 +49,9 @@ If the issue is documentation, usage text, or function help wording, do not edit
 - Keep `README.md` or `QUICKSTART.md` aligned when behavior affects broader onboarding
 
 ### Packaging and Launchers
-- `run.sh` and `run.bat` are launch scripts
-- `build_dmg.sh` and `build_windows_zip.sh` are distribution scripts
+- `run.sh` is a root shortcut that forwards to `scripts/run.sh`
+- `scripts/run.sh` and `scripts/run.bat` are launch scripts
+- `scripts/build_dmg.sh` and `scripts/build_windows_zip.sh` are distribution scripts
 - Avoid packaging changes for requests that are purely workflow/UI logic
 
 ## Ask Before Doing These
@@ -73,8 +74,8 @@ Explain plan and ask for confirmation before:
 | `FUNCTION_2_COUNT_FILES.md` | User help for Function 2 behavior |
 | `FUNCTION_3_SYSTEM_INFO.md` | User help for Function 3 behavior |
 | `README.md` / `QUICKSTART.md` | Onboarding and high-level usage |
-| `run.sh` / `run.bat` | Cross-platform launch behavior |
-| `build_dmg.sh` / `build_windows_zip.sh` | Packaging workflows |
+| `run.sh` / `scripts/run.sh` / `scripts/run.bat` | Cross-platform launch behavior |
+| `scripts/build_dmg.sh` / `scripts/build_windows_zip.sh` | Packaging workflows |
 | `python_requirements.txt` | Python dependency set |
 
 ## Common Mistakes to Avoid
@@ -92,7 +93,7 @@ Use focused validation for touched areas:
 
 ```bash
 python3 -m py_compile app.py
-bash -n run.sh build_dmg.sh build_windows_zip.sh
+bash -n run.sh scripts/run.sh scripts/build_dmg.sh scripts/build_windows_zip.sh
 ```
 
 For docs-only changes, a focused diff review is sufficient.

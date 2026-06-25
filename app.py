@@ -1,25 +1,42 @@
-"""
-FLAT - Flet Layout Application Template
-A template Flet desktop application with persistent settings, logging,
-function management, and help documentation system based on OHM's proven UI.
+"""CORE - Collection Object Record Editor.
+
+A Flet desktop application for selecting a single row from a project's
+CollectionBuilder metadata CSV file, inspecting its structure and content,
+editing the row in a generated form, and saving changes back to the CSV.
 """
 
-import flet as ft
-import os
-import getpass
-import logging
+import csv
 import json
+import logging
+import os
 import platform
 import socket
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
-from cryptography.fernet import Fernet, InvalidToken
+from typing import List, Optional, Tuple
+
+import flet as ft
+
+
+def get_app_version() -> str:
+    """Read app version from the repository VERSION file."""
+    try:
+        version_file = Path(__file__).parent / "VERSION"
+        if version_file.exists():
+            return version_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        # Keep startup resilient if version metadata is unavailable.
+        pass
+    return "unknown"
+
+
+APP_VERSION = get_app_version()
+
 
 # Configure logging
-DATA_DIR = Path.home() / "FLAT-data"
+DATA_DIR = Path.home() / "CORE-data"
 os.makedirs(DATA_DIR / "logfiles", exist_ok=True)
-log_filename = DATA_DIR / "logfiles" / f"flat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+log_filename = DATA_DIR / "logfiles" / f"core_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
 file_handler = logging.FileHandler(log_filename)
 file_handler.setLevel(logging.DEBUG)
@@ -34,714 +51,572 @@ console_handler.setFormatter(formatter)
 logging.basicConfig(level=logging.DEBUG, handlers=[file_handler, console_handler])
 logger = logging.getLogger(__name__)
 
-# Reduce Flet's logging verbosity
 logging.getLogger("flet").setLevel(logging.WARNING)
 logging.getLogger("flet_core").setLevel(logging.WARNING)
 logging.getLogger("flet_desktop").setLevel(logging.WARNING)
 
-# Persistent storage file
+
 PERSISTENCE_FILE = DATA_DIR / "persistent.json"
-
-# Encryption key file
-ENCRYPTION_KEY_FILE = DATA_DIR / "encryption_key"
-
-# Sensitive fields that should be encrypted in settings
-SENSITIVE_FIELDS = ["api_key", "api_secret", "password"]
-
-# App settings filename and defaults
-APP_SETTINGS_FILENAME = "flat_settings.json"
-DEFAULT_APP_SETTINGS = {
-    "auto_save_enabled": False,
-    "auto_save_format": "txt",
-    "api_key": "",
-    "api_secret": "",
-    "password": "",
+DEFAULT_UI_STATE = {
+    "last_project_dir": "",
+    "last_metadata_csv": "",
+    "last_record_index": 0,
 }
+
+PREFERRED_LABEL_FIELDS = (
+    "identifier",
+    "object_id",
+    "objectid",
+    "local_identifier",
+    "item_id",
+    "call_number",
+    "title",
+    "name",
+    "filename",
+    "file_name",
+)
+
+MULTILINE_HINTS = (
+    "description",
+    "abstract",
+    "note",
+    "notes",
+    "summary",
+    "transcript",
+    "caption",
+    "subject",
+    "content",
+    "keywords",
+    "text",
+)
 
 
 class PersistentStorage:
-    """Handle persistent storage of UI state and function usage."""
+    """Handle persistent storage of UI state."""
 
     def __init__(self):
         self.data = self.load()
 
     def load(self) -> dict:
-        """Load persistent data from file."""
+        """Load persistent data from disk."""
         try:
             if os.path.exists(PERSISTENCE_FILE):
-                with open(PERSISTENCE_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                with open(PERSISTENCE_FILE, "r", encoding="utf-8") as file_handle:
+                    data = json.load(file_handle)
                 logger.info(f"Loaded persistent data from {PERSISTENCE_FILE}")
                 return data
-        except Exception as e:
-            logger.warning(f"Could not load persistent data: {str(e)}")
+        except Exception as error:
+            logger.warning(f"Could not load persistent data: {error}")
 
-        return {
-            "ui_state": {
-                "last_input_dir": "",
-                "last_output_dir": "",
-                "last_file": "",
-                "window_left": None,
-                "window_top": None,
-            },
-            "function_usage": {},
-        }
+        return {"ui_state": dict(DEFAULT_UI_STATE)}
 
     def save(self):
-        """Save persistent data to file."""
+        """Save persistent data to disk."""
         try:
-            with open(PERSISTENCE_FILE, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
+            with open(PERSISTENCE_FILE, "w", encoding="utf-8") as file_handle:
+                json.dump(self.data, file_handle, indent=2, ensure_ascii=False)
             logger.debug(f"Saved persistent data to {PERSISTENCE_FILE}")
-        except Exception as e:
-            logger.error(f"Could not save persistent data: {str(e)}")
+        except Exception as error:
+            logger.error(f"Could not save persistent data: {error}")
 
-    def set_ui_state(self, field: str, value: str):
-        """Update UI state field."""
+    def set_ui_state(self, field: str, value):
+        """Update a UI state field."""
+        self.data.setdefault("ui_state", dict(DEFAULT_UI_STATE))
         self.data["ui_state"][field] = value
         self.save()
 
-    def get_ui_state(self, field: str, default: str = "") -> str:
-        """Get UI state field."""
+    def get_ui_state(self, field: str, default=""):
+        """Read a UI state field."""
+        self.data.setdefault("ui_state", dict(DEFAULT_UI_STATE))
         return self.data["ui_state"].get(field, default)
 
-    def record_function_usage(self, function_name: str):
-        """Record that a function was used."""
-        if function_name not in self.data["function_usage"]:
-            self.data["function_usage"][function_name] = {"count": 0}
 
-        self.data["function_usage"][function_name]["last_used"] = datetime.now().isoformat()
-        self.data["function_usage"][function_name]["count"] = (
-            self.data["function_usage"][function_name].get("count", 0) + 1
-        )
-        self.save()
+def safe_text(value) -> str:
+    """Return a safe string representation for CSV values."""
+    if value is None:
+        return ""
+    return str(value)
 
 
-def get_or_create_encryption_key() -> bytes:
-    """
-    Get or create the encryption key from ~/.FLAT-data/encryption_key.
-    Returns the Fernet key as bytes.
-    """
-    if ENCRYPTION_KEY_FILE.exists():
-        try:
-            with open(ENCRYPTION_KEY_FILE, "rb") as f:
-                key = f.read()
-            # Verify it's a valid Fernet key
-            Fernet(key)
-            return key
-        except Exception as e:
-            logger.warning(f"Invalid encryption key file, regenerating: {str(e)}")
-    
-    # Generate a new key
-    key = Fernet.generate_key()
-    try:
-        with open(ENCRYPTION_KEY_FILE, "wb") as f:
-            f.write(key)
-        # Restrict permissions to owner only
-        os.chmod(ENCRYPTION_KEY_FILE, 0o600)
-    except Exception as e:
-        logger.error(f"Could not save encryption key: {str(e)}")
-    
-    return key
+def truncate_text(value: str, length: int = 60) -> str:
+    """Trim long text for compact labels."""
+    if len(value) <= length:
+        return value
+    return value[: length - 1].rstrip() + "…"
 
 
-def encrypt_sensitive_settings(settings: dict) -> dict:
-    """
-    Encrypt sensitive fields in settings dictionary.
-    Returns a new dictionary with encrypted values.
-    """
-    try:
-        key = get_or_create_encryption_key()
-        cipher = Fernet(key)
-        encrypted = dict(settings)
-        
-        for field in SENSITIVE_FIELDS:
-            if field in encrypted and encrypted[field]:
-                plaintext = str(encrypted[field])
-                ciphertext = cipher.encrypt(plaintext.encode()).decode()
-                encrypted[field] = ciphertext
-        
-        return encrypted
-    except Exception as e:
-        logger.error(f"Could not encrypt settings: {str(e)}")
-        return settings
+def build_record_label(row: dict, headers: List[str], index: int) -> str:
+    """Create a human-friendly label for a record dropdown option."""
+    lowered_headers = {header.lower(): header for header in headers}
+
+    for preferred in PREFERRED_LABEL_FIELDS:
+        header = lowered_headers.get(preferred)
+        if header:
+            candidate = safe_text(row.get(header, "")).strip()
+            if candidate:
+                return f"{index + 1}. {header}: {truncate_text(candidate)}"
+
+    for header in headers:
+        candidate = safe_text(row.get(header, "")).strip()
+        if candidate:
+            return f"{index + 1}. {header}: {truncate_text(candidate)}"
+
+    return f"{index + 1}. Record"
 
 
-def decrypt_sensitive_settings(settings: dict) -> dict:
-    """
-    Decrypt sensitive fields in settings dictionary.
-    Returns a new dictionary with decrypted values.
-    Gracefully handles already-decrypted values and encryption errors.
-    """
-    try:
-        key = get_or_create_encryption_key()
-        cipher = Fernet(key)
-        decrypted = dict(settings)
-        
-        for field in SENSITIVE_FIELDS:
-            if field in decrypted and decrypted[field]:
-                ciphertext = decrypted[field]
-                try:
-                    # Try to decrypt; if it fails, assume it's already plaintext
-                    plaintext = cipher.decrypt(ciphertext.encode()).decode()
-                    decrypted[field] = plaintext
-                except (InvalidToken, ValueError):
-                    # Already plaintext or corrupted; leave as-is
-                    pass
-        
-        return decrypted
-    except Exception as e:
-        logger.error(f"Could not decrypt settings: {str(e)}")
-        return settings
+def summarize_row(row: dict, headers: List[str], limit: int = 4) -> str:
+    """Summarize a record using the first few populated fields."""
+    parts = []
+    for header in headers:
+        value = safe_text(row.get(header, "")).strip()
+        if value:
+            parts.append(f"{header}={truncate_text(value, 36)}")
+        if len(parts) >= limit:
+            break
+    return "; ".join(parts) if parts else "No populated values"
 
 
-def get_app_settings_path(working_dir: str) -> Path:
-    """Return the settings file path for a working directory."""
-    return Path(working_dir) / APP_SETTINGS_FILENAME
+def discover_metadata_csv(project_dir: Path) -> Optional[Path]:
+    """Find a likely metadata CSV file inside a project folder."""
+    if project_dir.is_file() and project_dir.suffix.lower() == ".csv":
+        return project_dir
 
+    if not project_dir.exists() or not project_dir.is_dir():
+        return None
 
-def ensure_app_settings_file(working_dir: str) -> Path:
-    """Create the app settings file with defaults if it does not exist."""
-    settings_path = get_app_settings_path(working_dir)
-    os.makedirs(settings_path.parent, exist_ok=True)
-    if not settings_path.exists():
-        with open(settings_path, "w", encoding="utf-8") as f:
-            json.dump(DEFAULT_APP_SETTINGS, f, indent=2, ensure_ascii=False)
-    return settings_path
+    patterns = (
+        "*metadata*.csv",
+        "*collectionbuilder*.csv",
+        "*collection*.csv",
+        "*.csv",
+    )
 
+    for pattern in patterns:
+        matches = sorted(project_dir.glob(pattern))
+        if matches:
+            return matches[0]
 
-def load_app_settings(working_dir: str) -> Tuple[dict, str]:
-    """Load app settings from the working directory settings file."""
-    try:
-        settings_path = ensure_app_settings_file(working_dir)
-        with open(settings_path, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
-        # Decrypt sensitive fields
-        loaded = decrypt_sensitive_settings(loaded)
-        settings = dict(DEFAULT_APP_SETTINGS)
-        settings.update(loaded)
-        return settings, ""
-    except Exception as e:
-        logger.error(f"Could not load app settings: {str(e)}")
-        return dict(DEFAULT_APP_SETTINGS), f"Error loading app settings: {str(e)}"
-
-
-def save_app_settings(working_dir: str, settings: dict) -> Tuple[bool, str]:
-    """Save app settings to the working directory settings file.
-    Sensitive fields are encrypted before saving.
-    """
-    try:
-        settings_path = ensure_app_settings_file(working_dir)
-        # Encrypt sensitive fields before saving
-        settings_to_save = encrypt_sensitive_settings(settings)
-        with open(settings_path, "w", encoding="utf-8") as f:
-            json.dump(settings_to_save, f, indent=2, ensure_ascii=False)
-        return True, str(settings_path)
-    except Exception as e:
-        logger.error(f"Could not save app settings: {str(e)}")
-        return False, f"Error saving app settings: {str(e)}"
-
-
-def parse_bool_text(value: str) -> Optional[bool]:
-    """Parse user-entered boolean text. Returns None if invalid."""
-    lowered = (value or "").strip().lower()
-    if lowered in ["true", "1", "yes", "y", "on"]:
-        return True
-    if lowered in ["false", "0", "no", "n", "off"]:
-        return False
     return None
 
 
-def load_help_document(filename: str) -> str:
-    """Load help documentation from markdown file."""
+def load_metadata_csv(csv_path: Path) -> Tuple[List[str], List[dict], str]:
+    """Load headers and rows from a metadata CSV file."""
     try:
-        help_path = Path(__file__).parent / filename
-        if help_path.exists():
-            return help_path.read_text(encoding="utf-8")
-        else:
-            return f"# Help Documentation Not Found\n\nCould not find {filename}"
-    except Exception as e:
-        logger.error(f"Error loading help document {filename}: {e}")
-        return f"# Error Loading Help\n\n{str(e)}"
+        if not csv_path.exists():
+            return [], [], f"Metadata CSV not found: {csv_path}"
+
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as file_handle:
+            reader = csv.DictReader(file_handle)
+            headers = list(reader.fieldnames or [])
+            if not headers:
+                return [], [], f"No headers found in {csv_path.name}"
+
+            rows: List[dict] = []
+            for raw_row in reader:
+                normalized_row = {header: safe_text(raw_row.get(header, "")) for header in headers}
+                if any(value.strip() for value in normalized_row.values()):
+                    rows.append(normalized_row)
+
+        return headers, rows, ""
+    except Exception as error:
+        logger.error(f"Could not load metadata CSV {csv_path}: {error}")
+        return [], [], f"Error loading metadata CSV: {error}"
+
+
+def save_metadata_csv(csv_path: Path, headers: List[str], rows: List[dict]) -> Tuple[bool, str]:
+    """Write the edited rows back to the metadata CSV file."""
+    try:
+        with open(csv_path, "w", encoding="utf-8", newline="") as file_handle:
+            writer = csv.DictWriter(file_handle, fieldnames=headers, extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({header: safe_text(row.get(header, "")) for header in headers})
+        return True, str(csv_path)
+    except Exception as error:
+        logger.error(f"Could not save metadata CSV {csv_path}: {error}")
+        return False, f"Error saving metadata CSV: {error}"
+
+
+def is_multiline_field(header: str, value: str) -> bool:
+    """Decide whether a field should render as multiline."""
+    lowered = header.lower()
+    if "\n" in value:
+        return True
+    if len(value) > 120:
+        return True
+    return any(hint in lowered for hint in MULTILINE_HINTS)
 
 
 def main(page: ft.Page):
-    page.title = "FLAT - Flet Layout Application Template"
-    page.padding = 20
-    page.window.width = 1050
-    page.window.height = 900
+    page.title = f"CORE v{APP_VERSION} - Collection Object Record Editor"
+    page.padding = 16
+    page.window.width = 1280
+    page.window.height = 980
+    page.window.min_width = 1100
+    page.window.min_height = 760
     page.scroll = ft.ScrollMode.AUTO
+    page.bgcolor = ft.Colors.BLUE_GREY_50
 
     storage = PersistentStorage()
-    logger.info("FLAT application started")
+    logger.info("CORE application started")
 
-    # ------------------------------------------------------------------ helpers
+    current_project_dir: Optional[Path] = None
+    current_csv_path: Optional[Path] = None
+    csv_headers: List[str] = []
+    csv_rows: List[dict] = []
+    selected_record_index = int(storage.get_ui_state("last_record_index", 0) or 0)
+    form_fields: dict = {}
+
+    stored_project_dir = safe_text(storage.get_ui_state("last_project_dir", "")).strip()
+    if stored_project_dir and Path(stored_project_dir).exists():
+        current_project_dir = Path(stored_project_dir)
+
+    stored_csv_path = safe_text(storage.get_ui_state("last_metadata_csv", "")).strip()
+    if stored_csv_path and Path(stored_csv_path).exists():
+        current_csv_path = Path(stored_csv_path)
+
+    project_dir_field = None
+    metadata_csv_field = None
+    record_dropdown = None
+    overview_text = None
+    structure_text = None
+    selection_text = None
+    preview_text = None
+    record_form_column = None
+    status_text = None
+    log_output = None
 
     def add_log_message(text: str):
-        """Prepend a timestamped line to the log output field."""
+        """Prepend a timestamped message to the log display."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         existing = log_output.value or ""
         log_output.value = f"[{timestamp}] {text}\n{existing}"
         page.update()
 
     def update_status(message: str, is_error: bool = False):
-        """Update the status text field."""
+        """Update the status line and mirror the message in the log."""
         status_text.value = message
-        status_text.color = ft.Colors.RED_700 if is_error else ft.Colors.BLACK
+        status_text.color = ft.Colors.RED_700 if is_error else ft.Colors.BLUE_GREY_900
         add_log_message(message)
+
+    def refresh_selector():
+        """Refresh the record dropdown using the current rows."""
+        nonlocal selected_record_index
+
+        if record_dropdown is None:
+            return
+
+        record_dropdown.options = [
+            ft.dropdown.Option(key=str(index), text=build_record_label(row, csv_headers, index))
+            for index, row in enumerate(csv_rows)
+        ]
+
+        if csv_rows:
+            if selected_record_index < 0 or selected_record_index >= len(csv_rows):
+                selected_record_index = 0
+            record_dropdown.value = str(selected_record_index)
+            record_dropdown.disabled = False
+        else:
+            selected_record_index = -1
+            record_dropdown.value = None
+            record_dropdown.disabled = True
+
+        storage.set_ui_state("last_record_index", selected_record_index if selected_record_index >= 0 else 0)
+
+    def update_overview():
+        """Update the visible summary of the selected metadata row."""
+        if not csv_headers:
+            overview_text.value = "Load a project folder or a metadata CSV file to start editing."
+            structure_text.value = "CORE builds a single-record form from the selected row of CollectionBuilder metadata."
+            selection_text.value = ""
+            preview_text.value = ""
+            return
+
+        overview_text.value = f"{len(csv_rows)} record(s) loaded across {len(csv_headers)} field(s)."
+        structure_text.value = "Detected columns: " + ", ".join(csv_headers[:10]) + (
+            " ..." if len(csv_headers) > 10 else ""
+        )
+
+        if 0 <= selected_record_index < len(csv_rows):
+            selected_row = csv_rows[selected_record_index]
+            selection_text.value = (
+                f"Selected record {selected_record_index + 1} of {len(csv_rows)}: "
+                f"{build_record_label(selected_row, csv_headers, selected_record_index)}"
+            )
+            preview_text.value = "Selected row preview: " + summarize_row(selected_row, csv_headers)
+        else:
+            selection_text.value = f"No record selected. {len(csv_rows)} record(s) available."
+            preview_text.value = ""
+
+    def render_record_form():
+        """Build the edit form for the current record."""
+        nonlocal form_fields
+        form_fields = {}
+
+        controls = []
+
+        if not csv_headers:
+            controls.append(
+                ft.Text(
+                    "Select a metadata CSV file to generate a single-record form.",
+                    selectable=True,
+                    color=ft.Colors.BLUE_GREY_700,
+                )
+            )
+            record_form_column.controls = controls
+            page.update()
+            return
+
+        if csv_rows and 0 <= selected_record_index < len(csv_rows):
+            source_row = csv_rows[selected_record_index]
+        else:
+            source_row = {header: "" for header in csv_headers}
+
+        for header in csv_headers:
+            value = safe_text(source_row.get(header, ""))
+            multiline = is_multiline_field(header, value)
+            field = ft.TextField(
+                label=header,
+                value=value,
+                multiline=multiline,
+                min_lines=3 if multiline else 1,
+                max_lines=10 if multiline else 1,
+                expand=True,
+            )
+            form_fields[header] = field
+            controls.append(field)
+
+        if not csv_rows:
+            controls.insert(
+                0,
+                ft.Text(
+                    "This metadata CSV currently has no data rows. Use New Record to add one.",
+                    selectable=True,
+                    color=ft.Colors.BLUE_GREY_700,
+                ),
+            )
+
+        record_form_column.controls = controls
         page.update()
 
-    def on_copy_status_click(e):
-        """Copy status text to clipboard."""
+    def load_metadata_into_editor(csv_path: Path, context_label: str = "Metadata CSV"):
+        """Load a CSV file into the editor and refresh the form."""
+        nonlocal current_project_dir, current_csv_path, csv_headers, csv_rows, selected_record_index
+
+        headers, rows, error = load_metadata_csv(csv_path)
+        if error:
+            update_status(error, is_error=True)
+            return
+
+        csv_headers = headers
+        csv_rows = rows
+        current_csv_path = csv_path
+        current_project_dir = csv_path.parent
+
+        selected_record_index = int(storage.get_ui_state("last_record_index", 0) or 0)
+        if csv_rows:
+            if selected_record_index < 0 or selected_record_index >= len(csv_rows):
+                selected_record_index = 0
+        else:
+            selected_record_index = -1
+
+        project_dir_field.value = str(current_project_dir)
+        metadata_csv_field.value = str(current_csv_path)
+
+        storage.set_ui_state("last_project_dir", str(current_project_dir))
+        storage.set_ui_state("last_metadata_csv", str(current_csv_path))
+        storage.set_ui_state("last_record_index", selected_record_index if selected_record_index >= 0 else 0)
+
+        refresh_selector()
+        update_overview()
+        render_record_form()
+
+        if csv_rows:
+            update_status(
+                f"Loaded {len(csv_rows)} record(s) from {current_csv_path.name} for editing."
+            )
+        else:
+            update_status(f"Loaded {current_csv_path.name}; no editable rows were found yet.")
+
+        logger.info(
+            f"{context_label}: loaded {len(csv_rows)} record(s) and {len(csv_headers)} field(s) from {current_csv_path}"
+        )
+
+    def load_project_folder(project_dir: Path):
+        """Load the most likely metadata CSV from a project folder."""
+        nonlocal current_project_dir, current_csv_path, csv_headers, csv_rows, selected_record_index
+
+        current_project_dir = project_dir
+        project_dir_field.value = str(project_dir)
+        storage.set_ui_state("last_project_dir", str(project_dir))
+
+        csv_path = discover_metadata_csv(project_dir)
+        if csv_path:
+            metadata_csv_field.value = str(csv_path)
+            storage.set_ui_state("last_metadata_csv", str(csv_path))
+            load_metadata_into_editor(csv_path, "Project folder")
+        else:
+            current_csv_path = None
+            csv_headers = []
+            csv_rows = []
+            selected_record_index = -1
+            refresh_selector()
+            update_overview()
+            render_record_form()
+            update_status(
+                f"No CSV file was found in {project_dir.name}. Choose a metadata CSV directly.",
+                is_error=True,
+            )
+
+    def on_project_dir_result(event: ft.FilePickerResultEvent):
+        if event.path:
+            load_project_folder(Path(event.path))
+
+    def on_csv_file_result(event: ft.FilePickerResultEvent):
+        if event.files and event.files[0].path:
+            load_metadata_into_editor(Path(event.files[0].path), "CSV file picker")
+
+    def on_record_change(event):
+        nonlocal selected_record_index
+
+        if event.control.value is None:
+            return
+
+        try:
+            selected_record_index = int(event.control.value)
+        except (TypeError, ValueError):
+            return
+
+        storage.set_ui_state("last_record_index", selected_record_index)
+        render_record_form()
+        update_overview()
+        if 0 <= selected_record_index < len(csv_rows):
+            update_status(f"Selected {build_record_label(csv_rows[selected_record_index], csv_headers, selected_record_index)}")
+
+    def on_reload_click(event):
+        if current_csv_path and current_csv_path.exists():
+            load_metadata_into_editor(current_csv_path, "Reload")
+        else:
+            update_status("Select a metadata CSV file before reloading.", is_error=True)
+
+    def on_new_record_click(event):
+        nonlocal selected_record_index
+
+        if not csv_headers:
+            update_status("Load a metadata CSV file before adding a record.", is_error=True)
+            return
+
+        csv_rows.append({header: "" for header in csv_headers})
+        selected_record_index = len(csv_rows) - 1
+        storage.set_ui_state("last_record_index", selected_record_index)
+        refresh_selector()
+        render_record_form()
+        update_overview()
+        update_status(f"Added a new blank record at position {selected_record_index + 1}.")
+
+    def on_save_click(event):
+        nonlocal selected_record_index
+
+        if not current_csv_path:
+            update_status("Select a metadata CSV file before saving.", is_error=True)
+            return
+
+        if not csv_headers:
+            update_status("No metadata headers are available to save.", is_error=True)
+            return
+
+        if selected_record_index < 0 or selected_record_index >= len(csv_rows):
+            csv_rows.append({header: "" for header in csv_headers})
+            selected_record_index = len(csv_rows) - 1
+
+        target_row = csv_rows[selected_record_index]
+        for header, field in form_fields.items():
+            target_row[header] = safe_text(field.value)
+
+        ok, result = save_metadata_csv(current_csv_path, csv_headers, csv_rows)
+        if not ok:
+            update_status(result, is_error=True)
+            return
+
+        storage.set_ui_state("last_record_index", selected_record_index)
+        refresh_selector()
+        update_overview()
+        update_status(f"Saved record {selected_record_index + 1} to {current_csv_path.name}.")
+        logger.info(f"Saved metadata CSV to {result}")
+
+    def on_copy_status_click(event):
         if status_text.value:
             page.set_clipboard(status_text.value)
             add_log_message("Status copied to clipboard")
 
-    def on_copy_log_click(e):
-        """Copy log output to clipboard."""
+    def on_copy_log_click(event):
         if log_output.value:
             page.set_clipboard(log_output.value)
             add_log_message("Log output copied to clipboard")
 
-    def on_clear_log_click(e):
-        """Clear the log output."""
+    def on_clear_log_click(event):
         log_output.value = ""
         page.update()
         logger.info("Log cleared")
 
-    # ------------------------------------------------------------------ UI state
+    project_picker = ft.FilePicker(on_result=on_project_dir_result)
+    csv_picker = ft.FilePicker(on_result=on_csv_file_result)
+    page.overlay.extend([project_picker, csv_picker])
 
-    current_directory = None
-    input_dir = storage.get_ui_state("last_input_dir")
-    if input_dir and Path(input_dir).exists():
-        current_directory = Path(input_dir)
-
-    dirs_expanded = True
-
-    # ------------------------------------------------------------------ directory selection
-
-    def on_input_dir_result(e: ft.FilePickerResultEvent):
-        nonlocal current_directory
-        if e.path:
-            current_directory = Path(e.path)
-            input_dir_field.value = str(current_directory)
-            storage.set_ui_state("last_input_dir", str(current_directory))
-            update_status(f"Input directory set: {current_directory.name}")
-            page.update()
-
-    def on_output_dir_result(e: ft.FilePickerResultEvent):
-        if e.path:
-            output_dir_field.value = e.path
-            storage.set_ui_state("last_output_dir", e.path)
-            update_status(f"Output directory set: {Path(e.path).name}")
-            page.update()
-
-    def on_file_result(e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            file_path = e.files[0].path
-            file_field.value = file_path
-            storage.set_ui_state("last_file", file_path)
-            update_status(f"File selected: {Path(file_path).name}")
-            page.update()
-
-    input_dir_picker = ft.FilePicker(on_result=on_input_dir_result)
-    output_dir_picker = ft.FilePicker(on_result=on_output_dir_result)
-    file_picker = ft.FilePicker(on_result=on_file_result)
-
-    page.overlay.extend([input_dir_picker, output_dir_picker, file_picker])
-
-    # ------------------------------------------------------------------ function implementations
-
-    def on_function_0_app_settings(e):
-        """Function 0: Open and edit app settings in working directory."""
-        storage.record_function_usage("Function 0")
-
-        working_dir = output_dir_field.value
-        if not working_dir:
-            update_status("Error: Please select a Working/Output Directory first", is_error=True)
-            return
-
-        settings, load_error = load_app_settings(working_dir)
-        if load_error:
-            update_status(load_error, is_error=True)
-            return
-
-        settings_path = get_app_settings_path(working_dir)
-        
-        # Create form fields
-        auto_save_field = ft.TextField(
-            label="auto_save_enabled",
-            value=str(settings.get("auto_save_enabled", False)).lower(),
-            hint_text="true or false",
-            width=320,
-        )
-        auto_save_format_field = ft.TextField(
-            label="auto_save_format",
-            value=str(settings.get("auto_save_format", "txt")).lower(),
-            hint_text="txt, csv, json, etc.",
-            width=320,
-        )
-        api_key_field = ft.TextField(
-            label="api_key",
-            value=str(settings.get("api_key", "")),
-            hint_text="API key (encrypted)",
-            width=320,
-        )
-        api_secret_field = ft.TextField(
-            label="api_secret",
-            value=str(settings.get("api_secret", "")),
-            hint_text="API secret (encrypted)",
-            password=True,
-            can_reveal_password=True,
-            width=320,
-        )
-        password_field = ft.TextField(
-            label="password",
-            value=str(settings.get("password", "")),
-            hint_text="Password (encrypted)",
-            password=True,
-            can_reveal_password=True,
-            width=320,
-        )
-
-        settings_path_text = ft.Text(
-            f"Settings file: {settings_path}",
-            size=12,
-            color=ft.Colors.GREY_700,
-            selectable=True,
-        )
-
-        def close_dialog(evt):
-            settings_dialog.open = False
-            page.update()
-
-        def save_settings_click(evt):
-            parsed_auto_save = parse_bool_text(auto_save_field.value)
-            if parsed_auto_save is None:
-                update_status(
-                    "Error: auto_save_enabled must be true/false (or yes/no, 1/0)",
-                    is_error=True,
-                )
-                return
-
-            new_settings = {
-                "auto_save_enabled": parsed_auto_save,
-                "auto_save_format": (auto_save_format_field.value or "").strip() or "txt",
-                "api_key": (api_key_field.value or "").strip(),
-                "api_secret": (api_secret_field.value or "").strip(),
-                "password": (password_field.value or "").strip(),
-            }
-            ok, save_result = save_app_settings(working_dir, new_settings)
-            if not ok:
-                update_status(save_result, is_error=True)
-                return
-
-            add_log_message(f"Settings saved: {save_result}")
-            update_status("Application settings updated")
-            settings_dialog.open = False
-            page.update()
-
-        settings_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Function 0: App Settings", weight=ft.FontWeight.BOLD),
-            content=ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Text(
-                            "Edit app settings and save them to the working directory.",
-                            size=13,
-                        ),
-                        settings_path_text,
-                        ft.Container(height=8),
-                        auto_save_field,
-                        auto_save_format_field,
-                        ft.Text(
-                            "Sensitive fields (encrypted in file):",
-                            size=12,
-                            weight=ft.FontWeight.BOLD,
-                        ),
-                        api_key_field,
-                        ft.Row(
-                            controls=[
-                                api_secret_field,
-                                password_field,
-                            ]
-                        ),
-                    ],
-                    tight=True,
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                width=700,
-                height=400,
-            ),
-            actions=[
-                ft.TextButton("Save", on_click=save_settings_click),
-                ft.TextButton("Cancel", on_click=close_dialog),
-            ],
-        )
-
-        page.overlay.append(settings_dialog)
-        settings_dialog.open = True
-        page.update()
-
-    def on_function_1_list_files(e):
-        """Function 1: List all files in input directory."""
-        storage.record_function_usage("Function 1")
-
-        if not current_directory or not current_directory.exists():
-            update_status("Error: Please select an input directory first", is_error=True)
-            return
-
-        files = list(current_directory.glob("*"))
-        file_list = [f.name for f in files if f.is_file()]
-
-        result_text = f"Found {len(file_list)} file(s) in {current_directory.name}:\n\n"
-        result_text += "\n".join(f"• {name}" for name in sorted(file_list)) if file_list else "(No files found)"
-
-        def close_dialog(e):
-            dialog.open = False
-            page.update()
-
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Function 1: List Files"),
-            content=ft.Container(
-                content=ft.Text(result_text, selectable=True),
-                width=600,
-                height=400,
-            ),
-            actions=[ft.TextButton("Close", on_click=close_dialog)],
-        )
-
-        page.overlay.append(dialog)
-        dialog.open = True
-        page.update()
-
-        update_status(f"Listed {len(file_list)} file(s)")
-        logger.info(f"Function 1: Listed {len(file_list)} files from {current_directory}")
-
-    def on_function_2_count_files(e):
-        """Function 2: Count files by extension."""
-        storage.record_function_usage("Function 2")
-
-        if not current_directory or not current_directory.exists():
-            update_status("Error: Please select an input directory first", is_error=True)
-            return
-
-        ext_counts = {}
-        for file_path in current_directory.glob("*"):
-            if file_path.is_file():
-                ext = file_path.suffix.lower() or "(no extension)"
-                ext_counts[ext] = ext_counts.get(ext, 0) + 1
-
-        result_text = f"File count by extension in {current_directory.name}:\n\n"
-        if ext_counts:
-            for ext, count in sorted(ext_counts.items(), key=lambda x: x[1], reverse=True):
-                result_text += f"• {ext}: {count}\n"
-        else:
-            result_text += "(No files found)"
-
-        def close_dialog(e):
-            dialog.open = False
-            page.update()
-
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Function 2: Count Files by Extension"),
-            content=ft.Container(
-                content=ft.Text(result_text, selectable=True),
-                width=600,
-                height=400,
-            ),
-            actions=[ft.TextButton("Close", on_click=close_dialog)],
-        )
-
-        page.overlay.append(dialog)
-        dialog.open = True
-        page.update()
-
-        total = sum(ext_counts.values())
-        update_status(f"Counted {total} file(s) across {len(ext_counts)} extension(s)")
-        logger.info(f"Function 2: Counted files by extension in {current_directory}")
-
-    def on_function_3_system_info(e):
-        """Function 3: Display system information."""
-        storage.record_function_usage("Function 3")
-
-        info_lines = [
-            f"Hostname: {socket.gethostname()}",
-            f"OS: {platform.system()} {platform.release()}",
-            f"Machine: {platform.machine()}",
-            f"Python: {platform.python_version()}",
-            f"User: {getpass.getuser()}",
-            f"Data Directory: {DATA_DIR}",
-        ]
-
-        result_text = "System Information:\n\n" + "\n".join(f"• {line}" for line in info_lines)
-
-        def close_dialog(e):
-            dialog.open = False
-            page.update()
-
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Function 3: System Info"),
-            content=ft.Container(
-                content=ft.Text(result_text, selectable=True),
-                width=600,
-                height=300,
-            ),
-            actions=[ft.TextButton("Close", on_click=close_dialog)],
-        )
-
-        page.overlay.append(dialog)
-        dialog.open = True
-        page.update()
-
-        update_status("Displayed system information")
-        logger.info("Function 3: Displayed system information")
-
-    # ------------------------------------------------------------------ function management
-
-    active_functions = [
-        "function_0_app_settings",
-        "function_1_list_files",
-        "function_2_count_files",
-        "function_3_system_info",
-    ]
-
-    functions = {
-        "function_0_app_settings": {
-            "label": "0: App Settings",
-            "icon": "⚙️",
-            "handler": on_function_0_app_settings,
-            "help_file": "FUNCTION_0_APP_SETTINGS.md"
-        },
-        "function_1_list_files": {
-            "label": "1: List Files",
-            "icon": "📁",
-            "handler": on_function_1_list_files,
-            "help_file": "FUNCTION_1_LIST_FILES.md"
-        },
-        "function_2_count_files": {
-            "label": "2: Count Files by Extension",
-            "icon": "📊",
-            "handler": on_function_2_count_files,
-            "help_file": "FUNCTION_2_COUNT_FILES.md"
-        },
-        "function_3_system_info": {
-            "label": "3: System Information",
-            "icon": "💻",
-            "handler": on_function_3_system_info,
-            "help_file": "FUNCTION_3_SYSTEM_INFO.md"
-        },
-    }
-
-    help_mode_enabled = ft.Ref[ft.Checkbox]()
-
-    def show_help_dialog(function_key):
-        """Display the help markdown file for a function"""
-        if function_key not in functions:
-            return
-
-        func_info = functions[function_key]
-        help_file = func_info.get("help_file")
-        display_label = func_info['label']
-
-        if not help_file:
-            add_log_message(f"No help file available for {display_label}")
-            return
-
-        markdown_content = load_help_document(help_file)
-        add_log_message(f"Displaying help for: {display_label}")
-
-        def close_help_dialog(e):
-            help_dialog.open = False
-            page.update()
-
-        def copy_help(e):
-            page.set_clipboard(markdown_content)
-            add_log_message("Help content copied to clipboard")
-
-        help_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text(f"Function {display_label}", weight=ft.FontWeight.BOLD),
-            content=ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Markdown(
-                            markdown_content,
-                            selectable=True,
-                            extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-                        ),
-                    ],
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                width=700,
-                height=500,
-            ),
-            actions=[
-                ft.TextButton("Copy to Clipboard", on_click=copy_help),
-                ft.TextButton("Close", on_click=close_help_dialog),
-            ],
-        )
-
-        page.overlay.append(help_dialog)
-        help_dialog.open = True
-        page.update()
-
-    def execute_selected_function(function_key):
-        """Execute or show help for the selected function."""
-        if not function_key or function_key not in functions:
-            return
-
-        if help_mode_enabled.current and help_mode_enabled.current.value:
-            show_help_dialog(function_key)
-        else:
-            func_info = functions[function_key]
-            handler = func_info.get("handler")
-            if handler:
-                logger.info(f"Executing {func_info['label']}")
-                handler(None)
-
-        active_function_dropdown.value = None
-        page.update()
-
-    def get_sorted_function_options(function_list):
-        """Return dropdown options sorted by function number."""
-        opts = []
-        for func_key in function_list:
-            if func_key in functions:
-                f = functions[func_key]
-                opts.append(
-                    ft.dropdown.Option(
-                        key=func_key,
-                        text=f"{f['icon']} {f['label']}"
-                    )
-                )
-        return opts
-
-    # ------------------------------------------------------------------ UI fields
-
-    input_dir_field = ft.TextField(
-        label="Input Directory",
-        value=storage.get_ui_state("last_input_dir"),
+    project_dir_field = ft.TextField(
+        label="Project Folder",
+        value=str(current_project_dir) if current_project_dir else "",
         read_only=True,
         expand=True,
     )
 
-    output_dir_field = ft.TextField(
-        label="Working/Output Directory",
-        value=storage.get_ui_state("last_output_dir"),
+    metadata_csv_field = ft.TextField(
+        label="Metadata CSV File",
+        value=str(current_csv_path) if current_csv_path else "",
         read_only=True,
         expand=True,
     )
 
-    file_field = ft.TextField(
-        label="Select File",
-        value=storage.get_ui_state("last_file"),
-        read_only=True,
-        expand=True,
+    record_dropdown = ft.Dropdown(
+        label="Single Record",
+        hint_text="Choose one object record",
+        width=700,
+        options=[],
+        on_change=on_record_change,
+    )
+
+    overview_text = ft.Text(
+        "Load a project folder or metadata CSV file to begin.",
+        size=14,
+        weight=ft.FontWeight.BOLD,
+        selectable=True,
+    )
+
+    structure_text = ft.Text(
+        "CORE will infer the row structure from the metadata CSV headers.",
+        size=12,
+        color=ft.Colors.BLUE_GREY_700,
+        selectable=True,
+    )
+
+    selection_text = ft.Text(
+        "",
+        size=12,
+        color=ft.Colors.BLUE_GREY_700,
+        selectable=True,
+    )
+
+    preview_text = ft.Text(
+        "",
+        size=12,
+        color=ft.Colors.BLUE_GREY_700,
+        selectable=True,
+    )
+
+    record_form_column = ft.Column(
+        controls=[],
+        spacing=10,
+        scroll=ft.ScrollMode.AUTO,
     )
 
     status_text = ft.TextField(
@@ -760,246 +635,242 @@ def main(page: ft.Page):
         read_only=True,
     )
 
-    def toggle_dirs(e):
-        nonlocal dirs_expanded
-        dirs_expanded = not dirs_expanded
-        dirs_toggle_button.icon = (
-            ft.Icons.EXPAND_LESS if dirs_expanded else ft.Icons.EXPAND_MORE
-        )
-        inputs_inner_column.visible = dirs_expanded
-        page.update()
-
-    dirs_toggle_button = ft.IconButton(
-        icon=ft.Icons.EXPAND_LESS,
-        tooltip="Collapse/Expand directories section",
-        on_click=toggle_dirs,
+    header_card = ft.Container(
+        bgcolor=ft.Colors.BLUE_900,
+        border_radius=18,
+        padding=24,
+        content=ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.FORMAT_LIST_BULLETED, size=30, color=ft.Colors.WHITE),
+                        ft.Text(
+                            f"CORE v{APP_VERSION}",
+                            size=30,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.WHITE,
+                        ),
+                    ],
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                ft.Text(
+                    "Collection Object Record Editor",
+                    size=16,
+                    color=ft.Colors.BLUE_100,
+                    weight=ft.FontWeight.W_500,
+                ),
+                ft.Text(
+                    "Select one object record from a CollectionBuilder metadata CSV, edit it in place, and save the row back to the same file.",
+                    size=13,
+                    color=ft.Colors.WHITE,
+                ),
+            ],
+            spacing=8,
+        ),
     )
 
-    inputs_inner_column = ft.Column(
-        controls=[
-            ft.Row(
-                controls=[
-                    input_dir_field,
-                    ft.ElevatedButton(
-                        "Browse...",
-                        icon=ft.Icons.FOLDER_OPEN,
-                        on_click=lambda _: input_dir_picker.get_directory_path(
-                            dialog_title="Select Input Directory"
+    source_card = ft.Container(
+        bgcolor=ft.Colors.WHITE,
+        border_radius=16,
+        padding=18,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+        content=ft.Column(
+            controls=[
+                ft.Text("Project Source", size=18, weight=ft.FontWeight.BOLD),
+                ft.Row(
+                    controls=[
+                        project_dir_field,
+                        ft.ElevatedButton(
+                            "Browse Folder",
+                            icon=ft.Icons.FOLDER_OPEN,
+                            on_click=lambda _: project_picker.get_directory_path(
+                                dialog_title="Select Project Folder"
+                            ),
                         ),
-                    ),
-                ],
-            ),
-            ft.Container(height=5),
-            ft.Row(
-                controls=[
-                    output_dir_field,
-                    ft.ElevatedButton(
-                        "Browse...",
-                        icon=ft.Icons.FOLDER_OPEN,
-                        on_click=lambda _: output_dir_picker.get_directory_path(
-                            dialog_title="Select Working/Output Directory"
+                    ],
+                ),
+                ft.Row(
+                    controls=[
+                        metadata_csv_field,
+                        ft.ElevatedButton(
+                            "Browse CSV",
+                            icon=ft.Icons.FILE_OPEN,
+                            on_click=lambda _: csv_picker.pick_files(
+                                dialog_title="Select Metadata CSV",
+                                allow_multiple=False,
+                            ),
                         ),
-                    ),
-                ],
-            ),
-        ],
-        visible=True,
+                    ],
+                ),
+            ],
+            spacing=10,
+        ),
     )
 
-    # ------------------------------------------------------------------ layout
+    selector_card = ft.Container(
+        bgcolor=ft.Colors.WHITE,
+        border_radius=16,
+        padding=18,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+        content=ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Column(
+                            controls=[
+                                ft.Text("Record Selection", size=18, weight=ft.FontWeight.BOLD),
+                                ft.Text(
+                                    "Choose a single object record to inspect or edit.",
+                                    size=12,
+                                    color=ft.Colors.BLUE_GREY_700,
+                                    italic=True,
+                                ),
+                                record_dropdown,
+                            ],
+                            spacing=6,
+                            expand=True,
+                        ),
+                        ft.Column(
+                            controls=[
+                                ft.Text("Actions", size=18, weight=ft.FontWeight.BOLD),
+                                ft.Row(
+                                    controls=[
+                                        ft.ElevatedButton(
+                                            "Reload",
+                                            icon=ft.Icons.REFRESH,
+                                            on_click=on_reload_click,
+                                        ),
+                                        ft.ElevatedButton(
+                                            "New Record",
+                                            icon=ft.Icons.ADD,
+                                            on_click=on_new_record_click,
+                                        ),
+                                        ft.ElevatedButton(
+                                            "Save Changes",
+                                            icon=ft.Icons.SAVE,
+                                            on_click=on_save_click,
+                                        ),
+                                    ],
+                                    wrap=True,
+                                ),
+                            ],
+                            spacing=6,
+                        ),
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+            ],
+        ),
+    )
+
+    editor_card = ft.Container(
+        bgcolor=ft.Colors.WHITE,
+        border_radius=16,
+        padding=18,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+        content=ft.Column(
+            controls=[
+                ft.Text("Record Details", size=18, weight=ft.FontWeight.BOLD),
+                overview_text,
+                structure_text,
+                selection_text,
+                preview_text,
+                ft.Container(height=4),
+                ft.Container(
+                    border_radius=12,
+                    padding=14,
+                    bgcolor=ft.Colors.BLUE_GREY_50,
+                    content=record_form_column,
+                    height=520,
+                ),
+            ],
+            spacing=8,
+        ),
+    )
+
+    status_card = ft.Container(
+        bgcolor=ft.Colors.WHITE,
+        border_radius=16,
+        padding=18,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+        content=ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Text("Status", size=18, weight=ft.FontWeight.BOLD),
+                        ft.IconButton(
+                            icon=ft.Icons.CONTENT_COPY,
+                            tooltip="Copy status to clipboard",
+                            on_click=on_copy_status_click,
+                            icon_size=20,
+                        ),
+                    ],
+                ),
+                status_text,
+            ],
+            spacing=8,
+        ),
+    )
+
+    log_card = ft.Container(
+        bgcolor=ft.Colors.WHITE,
+        border_radius=16,
+        padding=18,
+        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+        content=ft.Column(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Text("Activity Log", size=18, weight=ft.FontWeight.BOLD),
+                        ft.IconButton(
+                            icon=ft.Icons.DELETE_SWEEP,
+                            tooltip="Clear log",
+                            on_click=on_clear_log_click,
+                            icon_size=20,
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CONTENT_COPY,
+                            tooltip="Copy log to clipboard",
+                            on_click=on_copy_log_click,
+                            icon_size=20,
+                        ),
+                    ],
+                ),
+                log_output,
+            ],
+            spacing=8,
+        ),
+    )
 
     page.add(
         ft.Column(
             controls=[
-                # ---- Title
-                ft.Row([
-                    ft.Icon(ft.Icons.APARTMENT, size=28, color=ft.Colors.BLUE_700),
-                    ft.Text(
-                        "FLAT — Flet Layout Application Template",
-                        size=24,
-                        weight=ft.FontWeight.BOLD,
-                    ),
-                ], spacing=10),
-                ft.Text(
-                    "A template application with persistent settings, logging, and function management",
-                    size=13,
-                    color=ft.Colors.GREY_700,
-                    italic=True,
-                ),
-                ft.Divider(height=5),
-
-                # ---- Directories section (collapsible)
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Row(
-                                controls=[
-                                    ft.Text(
-                                        "Directories",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                    ),
-                                    dirs_toggle_button,
-                                ],
-                            ),
-                            inputs_inner_column,
-                        ],
-                        spacing=5,
-                    ),
-                    padding=5,
-                ),
-
-                ft.Divider(height=5),
-
-                # ---- File Selection
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Text(
-                                "File Selection",
-                                size=18,
-                                weight=ft.FontWeight.BOLD,
-                            ),
-                            ft.Row(
-                                controls=[
-                                    file_field,
-                                    ft.ElevatedButton(
-                                        "Browse...",
-                                        icon=ft.Icons.FILE_OPEN,
-                                        on_click=lambda _: file_picker.pick_files(
-                                            dialog_title="Select File",
-                                            allow_multiple=False,
-                                        ),
-                                    ),
-                                ],
-                            ),
-                        ],
-                        spacing=5,
-                    ),
-                    padding=5,
-                ),
-
-                ft.Divider(height=5),
-
-                # ---- Functions
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Row(
-                                controls=[
-                                    ft.Column(
-                                        controls=[
-                                            ft.Text(
-                                                "Functions",
-                                                size=18,
-                                                weight=ft.FontWeight.BOLD,
-                                            ),
-                                            ft.Text(
-                                                "Select and execute workflow functions",
-                                                size=12,
-                                                italic=True,
-                                                color=ft.Colors.GREY_700,
-                                            ),
-                                            ft.Container(height=5),
-                                            active_function_dropdown := ft.Dropdown(
-                                                label="Select Function to Execute",
-                                                hint_text="Choose a function",
-                                                width=500,
-                                                options=[],
-                                                on_change=lambda e: execute_selected_function(
-                                                    e.control.value
-                                                ),
-                                            ),
-                                            ft.Container(height=5),
-                                            ft.Checkbox(
-                                                label="Help Mode",
-                                                ref=help_mode_enabled,
-                                                tooltip="Enable to view help documentation for functions instead of executing them",
-                                            ),
-                                        ],
-                                        spacing=5,
-                                    ),
-                                ],
-                                vertical_alignment=ft.CrossAxisAlignment.START,
-                            ),
-                        ],
-                        spacing=5,
-                    ),
-                    padding=5,
-                ),
-
-                ft.Divider(height=5),
-
-                # ---- Status
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Row(
-                                controls=[
-                                    ft.Text(
-                                        "Status",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                    ),
-                                    ft.IconButton(
-                                        icon=ft.Icons.COPY,
-                                        tooltip="Copy status to clipboard",
-                                        on_click=on_copy_status_click,
-                                        icon_size=20,
-                                    ),
-                                ],
-                            ),
-                            status_text,
-                        ],
-                        spacing=5,
-                    ),
-                    padding=5,
-                ),
-
-                ft.Divider(height=5),
-
-                # ---- Log output
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Row(
-                                controls=[
-                                    ft.Text(
-                                        "Log Output",
-                                        size=18,
-                                        weight=ft.FontWeight.BOLD,
-                                    ),
-                                    ft.IconButton(
-                                        icon=ft.Icons.DELETE_SWEEP,
-                                        tooltip="Clear log",
-                                        on_click=on_clear_log_click,
-                                        icon_size=20,
-                                    ),
-                                    ft.IconButton(
-                                        icon=ft.Icons.COPY,
-                                        tooltip="Copy log to clipboard",
-                                        on_click=on_copy_log_click,
-                                        icon_size=20,
-                                    ),
-                                ],
-                            ),
-                            log_output,
-                        ],
-                        spacing=5,
-                    ),
-                    padding=5,
-                ),
+                header_card,
+                source_card,
+                selector_card,
+                editor_card,
+                status_card,
+                log_card,
             ],
-            spacing=5,
+            spacing=16,
         )
     )
 
-    # Initialize function dropdown
-    active_function_dropdown.options = get_sorted_function_options(active_functions)
-    page.update()
+    if current_csv_path and current_csv_path.exists():
+        load_metadata_into_editor(current_csv_path, "Session restore")
+    elif current_project_dir and current_project_dir.exists():
+        load_project_folder(current_project_dir)
+    else:
+        refresh_selector()
+        update_overview()
+        render_record_form()
+        update_status(f"CORE v{APP_VERSION} ready. Open a project folder or metadata CSV file to begin.")
 
-    logger.info("UI initialised successfully")
-    add_log_message("FLAT application ready. Select a function to begin.")
+    page.update()
+    logger.info(
+        f"UI initialised successfully on {socket.gethostname()} running {platform.system()} {platform.release()}"
+    )
 
 
 if __name__ == "__main__":

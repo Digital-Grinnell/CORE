@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# build_windows_zip.sh — Build a Windows distributable ZIP for FLAT.
+# build_windows_zip.sh — Build a Windows distributable ZIP for CORE.
 #
 # Usage:
 #   bash build_windows_zip.sh          # version defaults to 1.0
 #   bash build_windows_zip.sh 1.2      # explicit version
 #
-# Output: FLAT_v<version>_Windows.zip in the project root
+# Output: CORE_v<version>_Windows.zip in the project root
 #
 # Recipients need: Windows 10/11, Python 3 (from python.org).
 # No code-signing is performed.
@@ -13,11 +13,12 @@
 set -euo pipefail
 
 VERSION="${1:-1.0}"
-APP_NAME="FLAT"
-DISPLAY_NAME="FLAT — Flet Layout Application Template"
+APP_NAME="CORE"
+DISPLAY_NAME="CORE — Collection Object Record Editor"
 ZIP_NAME="${APP_NAME}_v${VERSION}_Windows.zip"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ZIP_OUT="$SCRIPT_DIR/$ZIP_NAME"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ZIP_OUT="$PROJECT_ROOT/$ZIP_NAME"
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
@@ -43,7 +44,7 @@ rsync -a \
     --exclude='logfiles/' \
     --exclude='*.pyc' \
     --exclude='__pycache__/' \
-    "$SCRIPT_DIR/" "$STAGE_DIR/"
+    "$PROJECT_ROOT/" "$STAGE_DIR/"
 
 echo "  ✓ $(find "$STAGE_DIR" -type f | wc -l | tr -d ' ') files copied"
 
@@ -64,13 +65,13 @@ echo "   • Python 3:  https://www.python.org/downloads/"
 echo "     ⚠️  During install, check \"Add Python to PATH\""
 echo
 echo " Installation:"
-echo "   1. Extract FLAT_v${VERSION}_Windows.zip to a convenient folder"
+echo "   1. Extract CORE_v${VERSION}_Windows.zip to a convenient folder"
 echo "   2. Open the extracted ${APP_NAME}_v${VERSION} folder"
 echo
 echo " First launch:"
 echo "   • Double-click run.bat"
 echo "   • A console window opens and installs dependencies automatically"
 echo "     (first run only — may take a few minutes)"
-echo "   • The FLAT window opens when setup is complete"
-echo "   • Leave the console window open while using FLAT"
+echo "   • The CORE window opens when setup is complete"
+echo "   • Leave the console window open while using CORE"
 echo "────────────────────────────────────────────────"

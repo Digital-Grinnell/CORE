@@ -15,7 +15,7 @@ FLAT is a reusable template app. Most requests fit one of these buckets:
 
 1. App behavior/UI in `app.py`
 2. Function help docs in `FUNCTION_*.md`
-3. Launch or packaging scripts (`run.sh`, `run.bat`, `build_dmg.sh`, `build_windows_zip.sh`)
+3. Launch or packaging scripts (`run.sh`, `scripts/run.sh`, `scripts/run.bat`, `scripts/build_dmg.sh`, `scripts/build_windows_zip.sh`)
 4. Dependencies in `python_requirements.txt`
 5. High-level documentation (`README.md`, `QUICKSTART.md`, `CHANGELOG.md`)
 
@@ -29,7 +29,7 @@ Prefer outcome-based prompts.
 |---|---|
 | "Edit `app.py` to change Function 2" | "Make Function 2 include hidden files in extension counts and update its help doc" |
 | "Change the settings JSON behavior" | "Add a new Function 0 setting with encryption if sensitive, and document it" |
-| "Update script" | "Improve `run.sh` startup checks for missing Python and keep behavior aligned with `run.bat`" |
+| "Update script" | "Improve `scripts/run.sh` startup checks for missing Python and keep behavior aligned with `scripts/run.bat`" |
 
 Helpful details to include:
 
@@ -76,7 +76,7 @@ Settings change:
 
 Packaging change:
 
-> Improve macOS DMG build error messages in `build_dmg.sh` without changing output file naming conventions.
+> Improve macOS DMG build error messages in `scripts/build_dmg.sh` without changing output file naming conventions.
 
 ## Working rhythm
 

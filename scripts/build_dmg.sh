@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# build_dmg.sh — Build a macOS distributable DMG for FLAT.
+# build_dmg.sh — Build a macOS distributable DMG for CORE.
 #
 # Usage:
 #   bash build_dmg.sh          # version defaults to 1.0
 #   bash build_dmg.sh 1.2      # explicit version
 #
-# Output: FLAT_v<version>.dmg in the project root
+# Output: CORE_v<version>.dmg in the project root
 #
 # Recipients need: macOS 12+, Python 3
 # No code-signing is performed; recipients bypass Gatekeeper with right-click → Open.
@@ -13,12 +13,13 @@
 set -euo pipefail
 
 VERSION="${1:-1.0}"
-APP_NAME="FLAT"
-BUNDLE_ID="com.template.flat"
-DISPLAY_NAME="FLAT — Flet Layout Application Template"
+APP_NAME="CORE"
+BUNDLE_ID="com.digitalgrinnell.core"
+DISPLAY_NAME="CORE — Collection Object Record Editor"
 DMG_NAME="${APP_NAME}_v${VERSION}.dmg"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DMG_OUT="$SCRIPT_DIR/$DMG_NAME"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DMG_OUT="$PROJECT_ROOT/$DMG_NAME"
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
@@ -64,7 +65,7 @@ cat > "$CONTENTS/Info.plist" << PLIST
 </plist>
 PLIST
 
-# ── 2. Launcher script (Contents/MacOS/FLAT) ───────────────────────────────
+# ── 2. Launcher script (Contents/MacOS/CORE) ───────────────────────────────
 # Opens a Terminal window that runs run.sh from inside the bundle.
 # The Terminal window remains visible so users can see setup progress and errors.
 cat > "$MACOS_DIR/$APP_NAME" << 'LAUNCHER'
@@ -91,7 +92,7 @@ rsync -a \
     --exclude='logfiles/' \
     --exclude='*.pyc' \
     --exclude='__pycache__/' \
-    "$SCRIPT_DIR/" "$SRC_DIR/"
+    "$PROJECT_ROOT/" "$SRC_DIR/"
 
 echo "  ✓ $(find "$SRC_DIR" -type f | wc -l | tr -d ' ') files copied"
 
@@ -120,16 +121,16 @@ echo "   • Python 3:  https://python.org/downloads  (or via Homebrew: brew ins
 echo
 echo " Installation:"
 echo "   1. Open $DMG_NAME"
-echo "   2. Drag FLAT.app to your Applications folder (or any convenient location)"
+echo "   2. Drag CORE.app to your Applications folder (or any convenient location)"
 echo "   3. Eject the DMG"
 echo
 echo " First launch (Gatekeeper — unsigned app):"
-echo "   • Right-click FLAT.app → Open → click Open in the dialog"
+echo "   • Right-click CORE.app → Open → click Open in the dialog"
 echo "   • Subsequent launches can use a normal double-click"
 echo
 echo " What happens on first launch:"
 echo "   • A Terminal window opens and sets up a Python virtual environment"
 echo "   • Dependencies install automatically (may take a few minutes)"
-echo "   • The FLAT window opens when setup is complete"
+echo "   • The CORE window opens when setup is complete"
 echo "   • The Terminal window can be left open or minimised while using the app"
 echo "────────────────────────────────────────────────"
