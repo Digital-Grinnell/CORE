@@ -2,6 +2,10 @@
 
 CORE is a Flet app for selecting one object record from a CollectionBuilder metadata CSV, editing that single row, and saving the changes back to the file.
 
+## UI Preview
+
+![CORE UI preview](docs/images/core-ui-preview.jpg)
+
 ## Start Here
 
 ```bash
@@ -19,7 +23,7 @@ On Windows, run `scripts\\run.bat` from the project folder.
 4. Click Save Changes to write the row back to the CSV.
 5. CORE also creates a timestamped backup in `.CORE-working-directory` beside the CSV file.
 6. Optionally define field behavior in `CORE-settings.json` (for example, `hidden`, `disabled`, or `disabled/boolean`).
-7. Use **Unhide/Enable All** to temporarily show and enable all fields for the current app session.
+7. Use **Unhide/Enable All** to toggle all fields visible/editable for the current session, and toggle it again to restore hidden/disabled behavior.
 
 ## What Gets Saved
 
@@ -37,7 +41,7 @@ Optional app-level field settings file:
 
 - `CORE-settings.json` where keys are field names and values are characteristics
 - Any field not listed is treated as editable visible text
-- Restart CORE to re-apply `CORE-settings.json` after using **Unhide/Enable All**
+- The **Unhide/Enable All** toggle is session-only and does not change `CORE-settings.json`
 
 ## Helpful Files
 

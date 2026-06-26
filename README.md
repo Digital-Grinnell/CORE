@@ -12,7 +12,7 @@ CORE is a Flet desktop application for editing one object record at a time from 
 - Create a timestamped backup on each save inside `.CORE-working-directory` next to the CSV file
 - Remember the last CSV file and selected record
 - Apply field behavior overrides from `CORE-settings.json` (`hidden`, `disabled`, and slash-combined values)
-- Use **Unhide/Enable All** to temporarily ignore `hidden` and `disabled` settings for the active session
+- Use **Unhide/Enable All** as a toggle to temporarily ignore `hidden` and `disabled` settings for the active session, then toggle back to restore them
 
 ## Run It
 
@@ -60,7 +60,7 @@ CORE can also read optional field settings from the app folder:
 - `CORE-settings.json` - per-field characteristics; keys are CSV field names
 - Supported now: `hidden`, `disabled`, and combined strings like `disabled/boolean`
 - Any field not listed defaults to editable visible text
-- The **Unhide/Enable All** action is session-only; restart CORE to return to `CORE-settings.json` behavior
+- The **Unhide/Enable All** toggle is session-only and does not modify `CORE-settings.json`
 
 ## Version History
 

@@ -440,11 +440,11 @@ def main(page: ft.Page):
             return
 
         if session_unhide_enable_all:
-            unhide_enable_all_button.text = "Unhide/Enable All (Active)"
-            unhide_enable_all_button.disabled = True
+            unhide_enable_all_button.text = "Hide/Disable All"
+            unhide_enable_all_button.style = ft.ButtonStyle(color=ft.Colors.RED_700)
         else:
             unhide_enable_all_button.text = "Unhide/Enable All"
-            unhide_enable_all_button.disabled = False
+            unhide_enable_all_button.style = ft.ButtonStyle(color=ft.Colors.GREEN_700)
 
     def refresh_selector():
         """Refresh the record dropdown using the current rows."""
@@ -654,13 +654,13 @@ def main(page: ft.Page):
     def on_unhide_enable_all_click(event):
         nonlocal session_unhide_enable_all
 
-        if session_unhide_enable_all:
-            return
-
-        session_unhide_enable_all = True
+        session_unhide_enable_all = not session_unhide_enable_all
         refresh_unhide_enable_button_state()
         render_record_form()
-        update_status("Session override enabled: all fields are visible and editable until app restart.")
+        if session_unhide_enable_all:
+            update_status("Session override enabled: all fields are visible and editable.")
+        else:
+            update_status("Session override disabled: hidden and disabled field settings are restored.")
 
     def on_save_click(event):
         nonlocal selected_record_index
