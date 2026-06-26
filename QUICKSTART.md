@@ -45,6 +45,7 @@ Optional app-level field settings file:
 
 ## Helpful Files
 
+- [INSTALLATION.md](INSTALLATION.md) - installation and setup instructions
 - [README.md](README.md) - application overview
 - [app.py](app.py) - runtime logic
 - [run.sh](run.sh) - root shortcut launcher

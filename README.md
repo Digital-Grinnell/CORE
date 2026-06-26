@@ -36,6 +36,7 @@ The launch scripts create a virtual environment, install dependencies, and start
 
 ## Files of Interest
 
+- [INSTALLATION.md](INSTALLATION.md) - installation and first-run instructions for macOS, Windows, and Linux
 - [app.py](app.py) - CORE runtime and CSV editor UI
 - [run.sh](run.sh) - root shortcut that forwards to scripts/run.sh
 - [scripts/run.sh](scripts/run.sh) - macOS/Linux launcher
