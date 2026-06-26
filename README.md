@@ -4,12 +4,15 @@ CORE is a Flet desktop application for editing one object record at a time from 
 
 ## What It Does
 
-- Open a project folder and auto-detect a likely metadata CSV, or browse directly to the CSV file
+- Browse directly to a metadata CSV file
 - Load the CSV headers and row data into a generated form
 - Select a single record from a dropdown list
 - Edit the current row in place
 - Save the updated row back to the original metadata CSV
-- Remember the last project folder, CSV file, and selected record
+- Create a timestamped backup on each save inside `.CORE-working-directory` next to the CSV file
+- Remember the last CSV file and selected record
+- Apply field behavior overrides from `CORE-settings.json` (`hidden`, `disabled`, and slash-combined values)
+- Use **Unhide/Enable All** to temporarily ignore `hidden` and `disabled` settings for the active session
 
 ## Run It
 
@@ -45,8 +48,19 @@ The launch scripts create a virtual environment, install dependencies, and start
 
 CORE stores its local state in `~/CORE-data/`:
 
-- `persistent.json` - last-used folder, CSV, and selected record
+- `persistent.json` - last-used CSV file and selected record
 - `logfiles/core_YYYYMMDD_HHMMSS.log` - timestamped application logs
+
+CORE also creates a per-project working folder beside the edited CSV file:
+
+- `.CORE-working-directory/` - timestamped CSV backups and temporary save files
+
+CORE can also read optional field settings from the app folder:
+
+- `CORE-settings.json` - per-field characteristics; keys are CSV field names
+- Supported now: `hidden`, `disabled`, and combined strings like `disabled/boolean`
+- Any field not listed defaults to editable visible text
+- The **Unhide/Enable All** action is session-only; restart CORE to return to `CORE-settings.json` behavior
 
 ## Version History
 
@@ -60,7 +74,6 @@ CORE follows the DART-style version history pattern:
 
 The main behavior lives in [app.py](app.py). If you want to adapt CORE for another metadata workflow, the key extension points are:
 
-- `discover_metadata_csv()` - project folder file discovery
 - `load_metadata_csv()` - CSV parsing
 - `render_record_form()` - dynamic form generation
 - `save_metadata_csv()` - write-back behavior
